@@ -1,0 +1,115 @@
+-- Uses MySQL Paradigm
+
+-- INIT tables
+CREATE TABLE orders (
+  order_id INT AUTO_INCREMENT KEY,
+  order_status VARCHAR(50),
+  order_place_time TIMESTAMP,
+  delivery_time TIMESTAMP,
+  cancel_time TIMESTAMP,
+  dasher_id INT,
+  market_short_name VARCHAR(10));
+  
+CREATE TABLE request (
+  request_id INT AUTO_INCREMENT KEY,
+  order_id INT ,
+  dasher_id VARCHAR(50));
+  
+-- One recent, completed, on-time order with one request in BAY
+INSERT INTO orders(order_status, order_place_time, delivery_time, cancel_time, dasher_id, market_short_name) VALUES ('Delivered', '2024-10-09 12:00:00', '2024-10-09 12:10:00',NULL, 101, 'BAY');
+INSERT INTO request(order_id, dasher_id) VALUES (1, 101);
+
+-- One recent, completed, on-time order with one request in NYC
+INSERT INTO orders(order_status, order_place_time, delivery_time, cancel_time, dasher_id, market_short_name) VALUES ('Delivered', '2024-10-09 12:00:00', '2024-10-09 12:44:00',NULL, 101, 'NYC');
+INSERT INTO request(order_id, dasher_id) VALUES (2, 101);
+
+-- Two recent, completed, on-time orders with two requests in BAY
+INSERT INTO orders(order_status, order_place_time, delivery_time, cancel_time, dasher_id, market_short_name) VALUES ('Delivered', '2024-10-09 12:00:00', '2024-10-09 12:10:00',NULL, 102, 'BAY');
+INSERT INTO orders(order_status, order_place_time, delivery_time, cancel_time, dasher_id, market_short_name) VALUES ('Delivered', '2024-10-09 12:00:00', '2024-10-09 12:10:00',NULL, 102,'BAY');
+
+INSERT INTO request(order_id, dasher_id) VALUES (3, 101);
+INSERT INTO request(order_id, dasher_id) VALUES (3, 102);
+INSERT INTO request(order_id, dasher_id) VALUES (4, 101);
+INSERT INTO request(order_id, dasher_id) VALUES (4, 102);
+
+-- One recent, completed, on-time orders with two requests in NYC
+INSERT INTO orders(order_status, order_place_time, delivery_time, cancel_time, dasher_id, market_short_name) VALUES ('Delivered', '2024-10-09 12:00:00', '2024-10-09 12:10:00',NULL, 102, 'NYC');
+
+INSERT INTO request(order_id, dasher_id) VALUES (5, 101);
+INSERT INTO request(order_id, dasher_id) VALUES (5, 102);
+
+-- One recent, completed, late order in both BAY and NYC with one request
+INSERT INTO orders(order_status, order_place_time, delivery_time, cancel_time, dasher_id, market_short_name) VALUES ('Delivered', '2024-10-09 12:00:00', '2024-10-09 12:45:00',NULL, 101, 'BAY');
+INSERT INTO orders(order_status, order_place_time, delivery_time, cancel_time, dasher_id, market_short_name) VALUES ('Delivered', '2024-10-09 12:00:00', '2024-10-09 12:45:00',NULL, 101, 'NYC');
+
+INSERT INTO request(order_id, dasher_id) VALUES (6, 101);
+INSERT INTO request(order_id, dasher_id) VALUES (7, 101);
+
+-- One recent, canceled, order in both BAY and NYC with no requests
+INSERT INTO orders(order_status, order_place_time, delivery_time, cancel_time, dasher_id, market_short_name) VALUES ('Canceled', '2024-10-09 12:00:00', NULL, '2024-10-09 12:10:00', 101, 'BAY');
+INSERT INTO orders(order_status, order_place_time, delivery_time, cancel_time, dasher_id, market_short_name) VALUES ('Canceled', '2024-10-09 12:00:00', NULL, '2024-10-09 12:10:00', 101, 'NYC');
+
+
+-- One old, completed, on-time order in both BAY and NYC with two requests
+INSERT INTO orders(order_status, order_place_time, delivery_time, cancel_time, dasher_id, market_short_name) VALUES ('Canceled', '2024-08-09 12:00:00', NULL, '2024-08-09 12:10:00', 102, 'BAY');
+INSERT INTO orders(order_status, order_place_time, delivery_time, cancel_time, dasher_id, market_short_name) VALUES ('Canceled', '2024-08-09 12:00:00', NULL, '2024-08-09 12:10:00', 102, 'NYC');
+
+INSERT INTO request(order_id, dasher_id) VALUES (10, 101);
+INSERT INTO request(order_id, dasher_id) VALUES (10, 102);
+INSERT INTO request(order_id, dasher_id) VALUES (11, 101);
+INSERT INTO request(order_id, dasher_id) VALUES (11, 102);
+
+-- Part 1: On_Time vs Late	
+WITH Timeliness AS (	
+  SELECT	
+    CASE	
+        WHEN MINUTE(TIMEDIFF(delivery_time, order_place_time)) >= 45 THEN 'Late'	
+        WHEN MINUTE(TIMEDIFF(delivery_time, order_place_time)) < 45 THEN 'On_Time'	
+        ELSE NULL	
+    END AS is_late,	
+  	order_id
+  from orders	
+  WHERE order_status = 'Delivered'	
+	AND ((DATEDIFF(CURRENT_TIMESTAMP(), delivery_time)-1 <= 28)
+       OR (DATEDIFF(CURRENT_TIMESTAMP(), cancel_time)-1 <= 28)))
+select is_late, count(*) / (select count(*) from Timeliness) AS prcnt_tot_delivs 	
+from Timeliness
+group by is_late;
+
+
+WITH OrderRequests AS(
+  SELECT 
+      orders.market_short_name,
+      COUNT(request.request_id) AS request_count
+  FROM 
+      orders
+  LEFT JOIN 
+      request ON orders.order_id = request.order_id
+  WHERE 
+      ((DATEDIFF(CURRENT_TIMESTAMP(), delivery_time)-1 <= 28)
+       OR (DATEDIFF(CURRENT_TIMESTAMP(), cancel_time)-1 <= 28))
+  GROUP BY 
+      orders.order_id, orders.market_short_name
+),
+MarketStats AS (
+    SELECT 
+        market_short_name,
+        COUNT(*) AS total_orders,
+        SUM(CASE WHEN 
+            request_count >= 2 THEN 1 
+            ELSE 0 END) AS multi_req_orders
+    FROM 
+        OrderRequests
+    GROUP BY 
+        market_short_name
+)
+SELECT 
+    MarketStats.market_short_name,
+    (multi_req_orders / total_orders) AS percent_multi_req,
+    AVG(request_count) AS avg_req_per_order
+FROM 
+    MarketStats
+JOIN 
+    OrderRequests ON MarketStats.market_short_name = OrderRequests.market_short_name
+GROUP BY 
+    market_short_name;
